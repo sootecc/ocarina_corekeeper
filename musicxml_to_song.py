@@ -7,7 +7,7 @@ import re
 import sys
 from fractions import Fraction
 from pathlib import Path
-from typing import Iterable, List, Optional, Sequence
+from typing import List, Optional, Sequence, Tuple
 
 import music21
 
@@ -104,7 +104,9 @@ def load_mapping_midis(path: Optional[Path]) -> List[int]:
     return midis
 
 
-def choose_transpose(piece_midis: Sequence[int], mapping_midis: Sequence[int], manual: Optional[int]) -> int:
+def choose_transpose(
+    piece_midis: Sequence[int], mapping_midis: Sequence[int], manual: Optional[int]
+) -> int:
     if manual is not None:
         return manual
     if not piece_midis:
@@ -148,12 +150,37 @@ def fraction_to_spec(value: Fraction) -> str:
     return "+".join(parts)
 
 
-def extract_events(stream: music21.stream.Stream, semitone_shift: int) -> Iterable[str]:
+def fold_into_range(midi: int, bounds: Optional[Tuple[int, int]]) -> Tuple[int, bool]:
+    if not bounds:
+        return midi, False
+    low, high = bounds
+    adjusted = midi
+    changed = False
+    if low > high:
+        raise ValueError("Invalid mapping range; lower bound exceeds upper bound")
+    while adjusted < low:
+        adjusted += 12
+        changed = True
+    while adjusted > high:
+        adjusted -= 12
+        changed = True
+    if not 0 <= adjusted <= 127:
+        raise ValueError("Folded 음이 MIDI 범위를 벗어났습니다. 매핑 범위를 확인하세요.")
+    return adjusted, changed
+
+
+def extract_events(
+    stream: music21.stream.Stream,
+    semitone_shift: int,
+    fold_bounds: Optional[Tuple[int, int]],
+) -> Tuple[List[str], int]:
+    folded = 0
+    events: List[str] = []
     for element in stream.flat.notesAndRests:
         duration = Fraction(element.duration.quarterLength).limit_denominator(64)
         spec = fraction_to_spec(duration)
         if element.isRest:
-            yield f"R:{spec}"
+            events.append(f"R:{spec}")
             continue
         if element.isChord:
             names = []
@@ -161,13 +188,20 @@ def extract_events(stream: music21.stream.Stream, semitone_shift: int) -> Iterab
                 midi = int(round(pitch.midi)) + semitone_shift
                 if not 0 <= midi <= 127:
                     raise ValueError(f"Pitch {pitch} shifted by {semitone_shift} is outside MIDI range")
+                midi, changed = fold_into_range(midi, fold_bounds)
+                if changed:
+                    folded += 1
                 names.append(midi_to_note_name(midi))
         else:
             midi = int(round(element.pitch.midi)) + semitone_shift
             if not 0 <= midi <= 127:
                 raise ValueError(f"Pitch {element.pitch} shifted by {semitone_shift} is outside MIDI range")
+            midi, changed = fold_into_range(midi, fold_bounds)
+            if changed:
+                folded += 1
             names = [midi_to_note_name(midi)]
-        yield f"{'+'.join(names)}:{spec}"
+        events.append(f"{'+'.join(names)}:{spec}")
+    return events, folded
 
 
 def detect_bpm(score: music21.stream.Score) -> Optional[int]:
@@ -188,20 +222,21 @@ def convert(
     piece_midis = collect_midi_notes(score)
     mapping_midis = load_mapping_midis(mapping_path)
     semitone_shift = choose_transpose(piece_midis, mapping_midis, manual_transpose)
-    events = list(extract_events(score, semitone_shift))
+    fold_bounds: Optional[Tuple[int, int]] = None
+    if mapping_midis:
+        fold_bounds = (min(mapping_midis), max(mapping_midis))
+    events, folded = extract_events(score, semitone_shift, fold_bounds)
     lines: List[str] = []
     if bpm:
         lines.append(f"BPM={bpm}")
     lines.extend(events)
     output_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    if mapping_midis and piece_midis:
-        new_min = min(piece_midis) + semitone_shift
-        new_max = max(piece_midis) + semitone_shift
-        if new_min < min(mapping_midis) or new_max > max(mapping_midis):
-            print(
-                "[WARN] 일부 음이 매핑 범위를 벗어났습니다. mapping.json을 확장하거나 수동 transpose를 조정하세요.",
-                file=sys.stderr,
-            )
+    if folded and mapping_midis:
+        low, high = min(mapping_midis), max(mapping_midis)
+        print(
+            f"[INFO] {folded}개의 음이 옥타브 조정되어 매핑 범위({midi_to_note_name(low)}~{midi_to_note_name(high)})에 맞춰졌습니다.",
+            file=sys.stderr,
+        )
     return semitone_shift
 
 
@@ -209,7 +244,21 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("input", type=Path, help="MusicXML file to convert")
     parser.add_argument("output", type=Path, help="Destination song file")
-    parser.add_argument("--map", type=Path, default=None, help="mapping.json 파일 경로 (음역 자동 맞춤)")
+    default_map = Path(__file__).with_name("mapping.json")
+    map_help = "mapping.json 파일 경로 (음역 자동 맞춤)"
+    if default_map.exists():
+        map_help += f" [기본값: {default_map.name}]"
+    parser.add_argument(
+        "--map",
+        type=Path,
+        default=default_map if default_map.exists() else None,
+        help=map_help,
+    )
+    parser.add_argument(
+        "--no-map",
+        action="store_true",
+        help="매핑을 사용하지 않고 원본 음역을 그대로 둡니다 (옥타브 조정/자동 transpose 비활성화)",
+    )
     parser.add_argument(
         "--transpose",
         type=int,
@@ -217,7 +266,10 @@ def main() -> None:
         help="강제로 적용할 반음 이동 값 (양수=올림, 음수=내림)",
     )
     args = parser.parse_args()
-    shift = convert(args.input, args.output, args.map, args.transpose)
+    mapping_path = None if args.no_map else args.map
+    if mapping_path and not mapping_path.exists():
+        parser.error(f"지정한 매핑 파일을 찾을 수 없습니다: {mapping_path}")
+    shift = convert(args.input, args.output, mapping_path, args.transpose)
     if shift:
         print(f"Applied transpose of {shift:+d} semitones.")
     else:
