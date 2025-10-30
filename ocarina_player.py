@@ -9,11 +9,12 @@ New in this version
 - **Strum/Stagger**: chord spread `(st0.01)` between note downs (sec)
 - **Repeat (multi-click)**: `(rep3)` splits duration into 3 re-triggers
 - **Headers**: set defaults anywhere: HOLD=0.12, STAGGER=0.008, REP=1
+- **Modes**: `MODE=SIM` or `(mode=sim)` for fully simultaneous chords
 - Keeps support for: LOW/HIGH lanes, dotted/added durations, TEMPO/UNIT
 Examples are in README.
 """
 import time, re, json, sys
-from typing import Dict, List, Tuple
+from typing import List
 
 try:
     import pyautogui
@@ -45,6 +46,15 @@ def parse_header(line: str, state: dict) -> bool:
     if up.startswith("HOLD="): state["hold"]=float(up.split("=",1)[1]); return True
     if up.startswith("STAGGER="): state["stagger"]=float(up.split("=",1)[1]); return True
     if up.startswith("REP="): state["rep"]=int(up.split("=",1)[1]); return True
+    if up.startswith(("MODE=","CHORDMODE=","CHORD=")):
+        raw = line.split("=",1)[1].strip().upper()
+        if raw in ("SIM","SIMUL","SIMULTANEOUS"):
+            state["mode"] = "SIM"
+        elif raw in ("STRUM","ARPEGGIO","SEQ","SEQUENTIAL"):
+            state["mode"] = "STRUM"
+        else:
+            raise ValueError(f"Unknown chord mode '{raw}'")
+        return True
     return False
 
 def parse_duration(spec: str, unit: int, q: float, dots: int) -> float:
@@ -66,16 +76,43 @@ def parse_attrs(attr_str: str) -> dict:
     for chunk in attr_str.split(','):
         c = chunk.strip()
         if not c: continue
-        if c.startswith('h'): out["hold"] = float(c[1:])
-        elif c.startswith('st'): out["stagger"] = float(c[2:])
-        elif c.startswith('rep'): out["rep"] = int(c[3:])
+        low = c.lower()
+        if low.startswith('h'): out["hold"] = float(c[1:])
+        elif low.startswith('st'): out["stagger"] = float(c[2:])
+        elif low.startswith('rep'): out["rep"] = int(c[3:])
+        elif '=' in c:
+            key, val = c.split('=',1)
+            key = key.strip().lower(); val = val.strip().upper()
+            if key in ("mode","chord","chordmode"):
+                if val in ("SIM","SIMUL","SIMULTANEOUS"):
+                    out["mode"] = "SIM"
+                elif val in ("STRUM","ARPEGGIO","SEQ","SEQUENTIAL"):
+                    out["mode"] = "STRUM"
+                else:
+                    raise ValueError(f"Unknown mode '{val}' in attributes")
+        elif low in ("sim","simul","simultaneous"):
+            out["mode"] = "SIM"
+        elif low in ("strum","arpeggio","seq","sequential"):
+            out["mode"] = "STRUM"
     return out
+
+def strip_inline_comment(line: str) -> str:
+    """Remove inline comments that start with a # preceded by whitespace."""
+    for idx, ch in enumerate(line):
+        if ch == '#' and (idx == 0 or line[idx-1].isspace()):
+            return line[:idx]
+    return line
+
 
 def parse_song(path: str):
     with open(path, "r", encoding="utf-8") as f:
-        lines = [ln.strip() for ln in f if ln.strip() and not ln.strip().startswith("#")]
+        lines = []
+        for raw in f:
+            cleaned = strip_inline_comment(raw).strip()
+            if cleaned:
+                lines.append(cleaned)
     if not lines: raise ValueError("Empty song")
-    state = {"bpm":120, "q":0.5, "unit":8, "lane":"LOW", "hold":0.12, "stagger":0.008, "rep":1}
+    state = {"bpm":120, "q":0.5, "unit":8, "lane":"LOW", "hold":0.12, "stagger":0.008, "rep":1, "mode":"STRUM"}
     idx = 0
     while idx < len(lines) and parse_header(lines[idx], state): idx+=1
     events = []  # list of dict: {notes:[C4..], dur, hold, stagger, rep}
@@ -94,7 +131,7 @@ def parse_song(path: str):
             up = raw.upper()
             if up.startswith("LOW"): state["lane"]="LOW"; continue
             if up.startswith("HIGH"): state["lane"]="HIGH"; continue
-            if up.startswith(("BPM=","TEMPO=","UNIT=","HOLD=","STAGGER=","REP=")):
+            if up.startswith(("BPM=","TEMPO=","UNIT=","HOLD=","STAGGER=","REP=","MODE=","CHORDMODE=","CHORD=")):
                 parse_header(up, state); continue
             m = tok_re.match(raw)
             if not m: raise ValueError(f"Bad token '{raw}'")
@@ -113,33 +150,42 @@ def parse_song(path: str):
                 "hold": float(attr.get("hold", state["hold"])),
                 "stagger": float(attr.get("stagger", state["stagger"])),
                 "rep": int(attr.get("rep", state["rep"])),
+                "mode": attr.get("mode", state["mode"]).upper(),
             }
             events.append(ev)
     return events, state
 
-def chord_play(keys: List[str], hold: float, stagger: float):
+def chord_play(keys: List[str], hold: float, stagger: float, mode: str):
     import pyautogui, time
-    # press in order with stagger
+    mode = mode.upper()
+    if mode == "SIM":
+        for k in keys:
+            pyautogui.keyDown(k)
+        time.sleep(max(0.01, hold))
+        for k in reversed(keys):
+            pyautogui.keyUp(k)
+        return
+    # default: strum/arpeggiate using stagger
     for i,k in enumerate(keys):
-        pyautogui.keyDown(k); 
-        if stagger>0 and i < len(keys)-1: time.sleep(stagger)
-    # hold
+        pyautogui.keyDown(k)
+        if stagger>0 and i < len(keys)-1:
+            time.sleep(stagger)
     time.sleep(max(0.01, hold))
-    # release in reverse with stagger
     for i,k in enumerate(reversed(keys)):
         pyautogui.keyUp(k)
-        if stagger>0 and i < len(keys)-1: time.sleep(stagger)
+        if stagger>0 and i < len(keys)-1:
+            time.sleep(stagger)
 
 def play(song_path: str, mapping_path: str, countdown: int = 4):
     with open(mapping_path, "r", encoding="utf-8") as f: mapping = json.load(f)
     events, state = parse_song(song_path)
     print(f"Loaded song '{song_path}' @ {state['bpm']} BPM, {len(events)} events.")
-    print(f"Defaults: UNIT={state['unit']} HOLD={state['hold']} STAGGER={state['stagger']} REP={state['rep']}")
+    print(f"Defaults: UNIT={state['unit']} HOLD={state['hold']} STAGGER={state['stagger']} REP={state['rep']} MODE={state['mode']}")
     print(f"You have {countdown} seconds to focus the Core Keeper window.")
     for i in range(countdown,0,-1): print(f"... starting in {i}"); time.sleep(1.0)
     print("Playing! (Ctrl+C to abort)")
     for ev in events:
-        notes = ev["notes"]; dur = ev["dur"]; hold = ev["hold"]; st = ev["stagger"]; rep = max(1, ev["rep"])
+        notes = ev["notes"]; dur = ev["dur"]; hold = ev["hold"]; st = ev["stagger"]; rep = max(1, ev["rep"]); mode = ev["mode"]
         if notes == ["R"]:
             time.sleep(dur); continue
         keys = []
@@ -155,7 +201,7 @@ def play(song_path: str, mapping_path: str, countdown: int = 4):
         slot = dur/rep
         for i in range(rep):
             used_hold = min(hold, max(0.01, slot-0.02))
-            chord_play(keys, used_hold, st)
+            chord_play(keys, used_hold, st, mode)
             rest = max(0.0, slot - used_hold)
             if rest>0: time.sleep(rest)
     print("Done.")
