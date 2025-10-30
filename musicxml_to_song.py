@@ -8,7 +8,7 @@ import sys
 from collections import Counter, defaultdict
 from fractions import Fraction
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 import music21
 
@@ -233,24 +233,78 @@ def extract_events(
     return events, folded
 
 
-def detect_bpm(score: music21.stream.Score) -> Optional[int]:
-    for _span, _end, mark in score.metronomeMarkBoundaries():
-        if not mark:
-            continue
-        # Prefer the tempo converted to quarter-note BPM so dotted/eighth
-        # references from the score do not slow playback.
-        try:
-            quarter_bpm = mark.getQuarterBPM()
-        except AttributeError:
-            quarter_bpm = None
-        if quarter_bpm:
-            return int(round(quarter_bpm))
-        if mark.number:
+def _iter_metronome_marks(stream: music21.stream.Stream) -> Iterable[music21.tempo.MetronomeMark]:
+    """Yield unique metronome marks found in the stream, ordered by offset."""
+
+    try:
+        from music21 import tempo
+    except ImportError:  # pragma: no cover - music21 is required at runtime
+        return []
+
+    seen: set[int] = set()
+    found: List[Tuple[Fraction, music21.tempo.MetronomeMark]] = []
+
+    for start, _end, mark in stream.metronomeMarkBoundaries():
+        if mark and id(mark) not in seen:
+            seen.add(id(mark))
+            offset = Fraction(start).limit_denominator(64)
+            found.append((offset, mark))
+
+    for mark in stream.recurse().getElementsByClass(tempo.MetronomeMark):
+        if id(mark) not in seen:
+            seen.add(id(mark))
+            offset = Fraction(getattr(mark, "offset", 0)).limit_denominator(64)
+            found.append((offset, mark))
+
+    for _offset, mark in sorted(found, key=lambda item: item[0]):
+        yield mark
+
+
+def _quarter_bpm(mark: music21.tempo.MetronomeMark) -> Optional[float]:
+    """Return the tempo expressed as quarter-note BPM, if available."""
+
+    for attr in ("numberSounding", "number"):
+        value = getattr(mark, attr, None)
+        if value:
             beat = getattr(mark, "beatDuration", None)
-            if beat and beat.quarterLength:
-                return int(round(mark.number * (1 / beat.quarterLength)))
-            return int(round(mark.number))
+            if beat and getattr(beat, "quarterLength", 0):
+                return float(value) * float(beat.quarterLength)
+            return float(value)
+    try:
+        quarter = mark.getQuarterBPM()
+    except Exception:  # pragma: no cover - music21 version differences
+        quarter = None
+    if quarter:
+        return float(quarter)
+    for attr in ("text", "displayText"):
+        raw = getattr(mark, attr, None)
+        if not raw:
+            continue
+        match = re.search(r"(\d+(?:\.\d+)?)", str(raw))
+        if match:
+            try:
+                return float(match.group(1))
+            except ValueError:
+                continue
     return None
+
+
+def detect_bpm(score: music21.stream.Score) -> Optional[int]:
+    candidates: List[int] = []
+    for mark in _iter_metronome_marks(score):
+        bpm = _quarter_bpm(mark)
+        if bpm and bpm > 0:
+            candidates.append(int(round(bpm)))
+
+    if not candidates:
+        return None
+
+    unique = list(dict.fromkeys(candidates))
+    if len(unique) > 1 and unique[0] == 120:
+        for value in unique[1:]:
+            if value != unique[0]:
+                return value
+    return unique[0]
 
 
 def convert(
@@ -258,9 +312,10 @@ def convert(
     output_path: Path,
     mapping_path: Optional[Path] = None,
     manual_transpose: Optional[int] = None,
+    manual_bpm: Optional[int] = None,
 ) -> int:
     score = music21.converter.parse(str(input_path))
-    bpm = detect_bpm(score)
+    bpm = manual_bpm if manual_bpm is not None else detect_bpm(score)
     piece_midis = collect_midi_notes(score)
     mapping_midis = load_mapping_midis(mapping_path)
     semitone_shift = choose_transpose(piece_midis, mapping_midis, manual_transpose)
@@ -273,6 +328,11 @@ def convert(
         lines.append(f"BPM={bpm}")
     lines.extend(events)
     output_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    if manual_bpm is None and bpm is None:
+        print(
+            "[WARN] 악보에서 BPM을 찾지 못했습니다. --bpm 옵션으로 직접 지정할 수 있습니다.",
+            file=sys.stderr,
+        )
     if folded and mapping_midis:
         low, high = min(mapping_midis), max(mapping_midis)
         print(
@@ -307,11 +367,17 @@ def main() -> None:
         default=None,
         help="강제로 적용할 반음 이동 값 (양수=올림, 음수=내림)",
     )
+    parser.add_argument(
+        "--bpm",
+        type=int,
+        default=None,
+        help="BPM을 직접 지정합니다 (악보의 템포 인식이 잘못될 때 사용)",
+    )
     args = parser.parse_args()
     mapping_path = None if args.no_map else args.map
     if mapping_path and not mapping_path.exists():
         parser.error(f"지정한 매핑 파일을 찾을 수 없습니다: {mapping_path}")
-    shift = convert(args.input, args.output, mapping_path, args.transpose)
+    shift = convert(args.input, args.output, mapping_path, args.transpose, args.bpm)
     if shift:
         print(f"Applied transpose of {shift:+d} semitones.")
     else:
