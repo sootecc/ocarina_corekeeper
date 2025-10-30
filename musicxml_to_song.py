@@ -5,9 +5,10 @@ import argparse
 import json
 import re
 import sys
+from collections import Counter, defaultdict
 from fractions import Fraction
 from pathlib import Path
-from typing import List, Optional, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import music21
 
@@ -175,32 +176,60 @@ def extract_events(
     fold_bounds: Optional[Tuple[int, int]],
 ) -> Tuple[List[str], int]:
     folded = 0
-    events: List[str] = []
+    changes: Dict[Fraction, Dict[str, List[int]]] = defaultdict(lambda: {"add": [], "remove": []})
+    timepoints = {Fraction(0)}
+
+    def to_fraction(value: float) -> Fraction:
+        return Fraction(value).limit_denominator(64)
+
     for element in stream.flat.notesAndRests:
-        duration = Fraction(element.duration.quarterLength).limit_denominator(64)
-        spec = fraction_to_spec(duration)
-        if element.isRest:
-            events.append(f"R:{spec}")
+        duration = to_fraction(element.duration.quarterLength)
+        if duration == 0:
             continue
-        if element.isChord:
-            names = []
-            for pitch in element.pitches:
-                midi = int(round(pitch.midi)) + semitone_shift
-                if not 0 <= midi <= 127:
-                    raise ValueError(f"Pitch {pitch} shifted by {semitone_shift} is outside MIDI range")
-                midi, changed = fold_into_range(midi, fold_bounds)
-                if changed:
-                    folded += 1
-                names.append(midi_to_note_name(midi))
-        else:
-            midi = int(round(element.pitch.midi)) + semitone_shift
+        start = to_fraction(element.offset)
+        end = start + duration
+        timepoints.add(start)
+        timepoints.add(end)
+        if element.isRest:
+            continue
+
+        pitches = element.pitches if element.isChord else [element.pitch]
+        for pitch in pitches:
+            midi = int(round(pitch.midi)) + semitone_shift
             if not 0 <= midi <= 127:
-                raise ValueError(f"Pitch {element.pitch} shifted by {semitone_shift} is outside MIDI range")
+                raise ValueError(f"Pitch {pitch} shifted by {semitone_shift} is outside MIDI range")
             midi, changed = fold_into_range(midi, fold_bounds)
             if changed:
                 folded += 1
-            names = [midi_to_note_name(midi)]
+            changes[start]["add"].append(midi)
+            changes[end]["remove"].append(midi)
+
+    ordered_times = sorted(timepoints)
+    events: List[str] = []
+    active: Counter[int] = Counter()
+
+    for idx, current in enumerate(ordered_times[:-1]):
+        delta = ordered_times[idx + 1] - current
+        if delta <= 0:
+            continue
+
+        # Retire any notes ending at this offset before starting new ones
+        for midi in changes[current]["remove"]:
+            active[midi] -= 1
+            if active[midi] <= 0:
+                del active[midi]
+
+        for midi in changes[current]["add"]:
+            active[midi] += 1
+
+        spec = fraction_to_spec(delta)
+        if not active:
+            events.append(f"R:{spec}")
+            continue
+
+        names = sorted({midi_to_note_name(midi) for midi in active.keys()})
         events.append(f"{'+'.join(names)}:{spec}")
+
     return events, folded
 
 
