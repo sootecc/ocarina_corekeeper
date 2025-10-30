@@ -71,9 +71,21 @@ def parse_attrs(attr_str: str) -> dict:
         elif c.startswith('rep'): out["rep"] = int(c[3:])
     return out
 
+def strip_inline_comment(line: str) -> str:
+    """Remove inline comments that start with a # preceded by whitespace."""
+    for idx, ch in enumerate(line):
+        if ch == '#' and (idx == 0 or line[idx-1].isspace()):
+            return line[:idx]
+    return line
+
+
 def parse_song(path: str):
     with open(path, "r", encoding="utf-8") as f:
-        lines = [ln.strip() for ln in f if ln.strip() and not ln.strip().startswith("#")]
+        lines = []
+        for raw in f:
+            cleaned = strip_inline_comment(raw).strip()
+            if cleaned:
+                lines.append(cleaned)
     if not lines: raise ValueError("Empty song")
     state = {"bpm":120, "q":0.5, "unit":8, "lane":"LOW", "hold":0.12, "stagger":0.008, "rep":1}
     idx = 0
