@@ -113,7 +113,11 @@ LOW: G+B+D:8(rep3)
 
 ```bash
 pip install music21
-python musicxml_to_song.py input_score.musicxml output_song.txt
+python musicxml_to_song.py input_score.musicxml output_song.txt --map mapping.json
 ```
 
-변환된 `output_song.txt`는 `ocarina_player.py --song output_song.txt`로 바로 연주할 수 있습니다. (필요하면 매핑/옥타브 등을 수동 조정하세요.)
+- `--map`을 지정하면 현재 `mapping.json`에 포함된 음역을 읽어서 자동으로 반음 이동(Transpose)을 적용합니다. (가장 작은 이동값을 우선 적용)
+- 특정 음역으로 강제 이동하고 싶다면 `--transpose -12`처럼 직접 지정할 수도 있습니다.
+- 변환기는 모든 음을 샤프 표기(`D#4`)로 정규화하므로 기본 매핑 예시와 바로 호환됩니다.
+
+변환된 `output_song.txt`는 `ocarina_player.py --song output_song.txt`로 바로 연주할 수 있습니다. (필요하면 매핑/옥타브 등을 추가로 조정하세요.)
