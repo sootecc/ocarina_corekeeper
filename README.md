@@ -99,8 +99,17 @@ LOW: G+B+D:8(rep3)
 
 ---
 ## 기존 악보(PDF/이미지) → 스크립트 변환 안내
-1. **이미지/PDF → MusicXML**: OMR(Optical Music Recognition) 도구인 [Audiveris](https://audiveris.github.io/) 등을 사용해 PDF/이미지를 MusicXML(`.xml`/`.mxl`)로 변환합니다.
-2. **MusicXML → 스크립트**: `music21` 패키지를 설치한 뒤 변환 스크립트를 사용하세요.
+1. **이미지/PDF → MusicXML**
+   - 프로젝트에는 OMR 엔진이 포함되어 있지 않습니다. 따라서 PDF/이미지를 바로 변환하려면 별도의 OMR 도구가 필요합니다.
+   - **오픈소스 Audiveris**: [공식 저장소](https://github.com/Audiveris/audiveris)의 릴리스를 직접 설치하거나 Docker가 있다면 다음처럼 실행할 수 있습니다.
+     ```bash
+     docker run --rm -v "$PWD:/scores" audiveris/audiveris \
+       -batch -export -output /scores/out /scores/input_score.pdf
+     ```
+     위 명령은 `out/` 폴더에 MusicXML(`.mxl`)을 생성합니다. JDK 설치가 가능하다면 저장소를 클론한 뒤 `./gradlew installDist`로 CLI를 직접 빌드할 수도 있습니다.
+   - **대체 도구**: MuseScore 4(파일 → PDF 가져오기), ScanScore, PlayScore 2, NotateMe 등 상용/체험판 OMR도 MusicXML/MIDI로 내보낼 수 있습니다. 이런 프로그램으로 PDF/이미지를 MusicXML이나 MIDI로 저장한 뒤 다음 단계를 진행하세요.
+   - **수동 입력**: 짧은 악보라면 MuseScore, Flat.io 같은 편집기에 직접 입력한 뒤 MusicXML로 내보내는 방법이 가장 확실합니다.
+2. **MusicXML/MIDI → 스크립트**: `music21` 패키지를 설치한 뒤 변환 스크립트를 사용하세요. (`musicxml_to_song.py`는 MusicXML, MIDI, MuseScore(`.mscz`) 등 `music21`이 읽을 수 있는 포맷이면 그대로 처리합니다.)
 
 ```bash
 pip install music21
