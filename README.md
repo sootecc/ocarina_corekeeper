@@ -78,12 +78,13 @@ LOW:  E D C R:8 C:8
 ```
 
 ---
-## 화음/홀드/스트럼/반복 표기
+## 화음/홀드/스트럼/반복/모드 표기
 - 화음: `C+E+G:4` (노트 사이 `+`)
 - 길이: `:4`, `:8+16`, 점음표 `.`
-- 속성(괄호): `(h0.15,st0.01,rep3)`
-  - `h` = hold(초), `st` = chord stagger/strum, `rep` = 반복 횟수
-- 헤더 기본값: `HOLD=0.12`, `STAGGER=0.008`, `REP=1` (본문 어디서나 변경 가능)
+- 속성(괄호): `(h0.15,st0.01,rep3,mode=sim)`
+  - `h` = hold(초), `st` = chord stagger/strum, `rep` = 반복 횟수, `mode` = `sim`(동시에 눌러 연주) / `strum`(기본, 순차로 눌러 아르페지오 느낌)
+- 헤더 기본값: `HOLD=0.12`, `STAGGER=0.008`, `REP=1`, `MODE=STRUM` (본문 어디서나 변경 가능)
+- 헤더/속성에서 `MODE=SIM` 또는 `(sim)`을 지정하면 해당 구간 화음이 완전 동시 입력으로 연주됩니다.
 
 예시:
 ```
@@ -91,6 +92,36 @@ BPM=96
 UNIT=8
 HOLD=0.12
 STAGGER=0.010
+MODE=SIM
 LOW: C+E+G:4
 LOW: G+B+D:8(rep3)
 ```
+
+---
+## 기존 악보(PDF/이미지) → 스크립트 변환 안내
+1. **이미지/PDF → MusicXML**
+   - 프로젝트에는 OMR 엔진이 포함되어 있지 않습니다. 따라서 PDF/이미지를 바로 변환하려면 별도의 OMR 도구가 필요합니다.
+   - **오픈소스 Audiveris**: [공식 저장소](https://github.com/Audiveris/audiveris)의 릴리스를 직접 설치하거나 Docker가 있다면 다음처럼 실행할 수 있습니다.
+     ```bash
+     docker run --rm -v "$PWD:/scores" audiveris/audiveris \
+       -batch -export -output /scores/out /scores/input_score.pdf
+     ```
+     위 명령은 `out/` 폴더에 MusicXML(`.mxl`)을 생성합니다. JDK 설치가 가능하다면 저장소를 클론한 뒤 `./gradlew installDist`로 CLI를 직접 빌드할 수도 있습니다.
+   - **대체 도구**: MuseScore 4(파일 → PDF 가져오기), ScanScore, PlayScore 2, NotateMe 등 상용/체험판 OMR도 MusicXML/MIDI로 내보낼 수 있습니다. 이런 프로그램으로 PDF/이미지를 MusicXML이나 MIDI로 저장한 뒤 다음 단계를 진행하세요.
+   - **수동 입력**: 짧은 악보라면 MuseScore, Flat.io 같은 편집기에 직접 입력한 뒤 MusicXML로 내보내는 방법이 가장 확실합니다.
+2. **MusicXML/MIDI → 스크립트**: `music21` 패키지를 설치한 뒤 변환 스크립트를 사용하세요. (`musicxml_to_song.py`는 MusicXML, MIDI, MuseScore(`.mscz`) 등 `music21`이 읽을 수 있는 포맷이면 그대로 처리합니다.)
+
+```bash
+pip install music21
+python musicxml_to_song.py input_score.musicxml output_song.txt
+```
+
+- 스크립트와 같은 폴더에 있는 `mapping.json`을 기본으로 읽어 자동으로 반음 이동(Transpose)을 적용합니다. (직접 다른 매핑을 쓰려면 `--map 다른매핑.json`)
+- 원본 음역을 그대로 확인하고 싶다면 `--no-map` 옵션을 주면 됩니다. (이 경우 옥타브 조정/자동 transpose가 비활성화)
+- 특정 음역으로 강제 이동하고 싶다면 `--transpose -12`처럼 직접 지정할 수도 있습니다.
+- 악보의 메트로놈/템포 표시는 자동으로 읽어서 `BPM=` 헤더로 변환됩니다. 점4분음표(혹은 다른 기준 박자)로 표시되어도 4분음표 기준 BPM으로 환산합니다.
+- 템포가 누락됐거나 잘못 인식되면 `--bpm 243`처럼 직접 지정해 주세요. (템포를 찾지 못한 경우 변환기에서 경고 메시지를 출력합니다.)
+- 변환기는 모든 음을 샤프 표기(`D#4`)로 정규화하므로 기본 매핑 예시와 바로 호환됩니다.
+- 매핑 범위를 넘어가는 음은 자동으로 옥타브를 올리거나 내려서(12음 단위) 맞춰 줍니다. 이때 조정된 음 개수는 변환 결과에 표시되므로, 필요하면 OMR 결과를 손으로 정리해 주세요.
+
+변환된 `output_song.txt`는 `ocarina_player.py --song output_song.txt`로 바로 연주할 수 있습니다. (필요하면 매핑/옥타브 등을 추가로 조정하세요.)
