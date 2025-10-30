@@ -235,7 +235,20 @@ def extract_events(
 
 def detect_bpm(score: music21.stream.Score) -> Optional[int]:
     for _span, _end, mark in score.metronomeMarkBoundaries():
+        if not mark:
+            continue
+        # Prefer the tempo converted to quarter-note BPM so dotted/eighth
+        # references from the score do not slow playback.
+        try:
+            quarter_bpm = mark.getQuarterBPM()
+        except AttributeError:
+            quarter_bpm = None
+        if quarter_bpm:
+            return int(round(quarter_bpm))
         if mark.number:
+            beat = getattr(mark, "beatDuration", None)
+            if beat and beat.quarterLength:
+                return int(round(mark.number * (1 / beat.quarterLength)))
             return int(round(mark.number))
     return None
 
