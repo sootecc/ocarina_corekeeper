@@ -4,7 +4,7 @@
 import argparse
 from fractions import Fraction
 from pathlib import Path
-from typing import Iterable, List
+from typing import Iterable, List, Optional
 
 import music21
 
@@ -41,7 +41,7 @@ def extract_events(stream: music21.stream.Stream) -> Iterable[str]:
         yield f"{'+'.join(names)}:{spec}"
 
 
-def detect_bpm(score: music21.stream.Score) -> int | None:
+def detect_bpm(score: music21.stream.Score) -> Optional[int]:
     for _span, _end, mark in score.metronomeMarkBoundaries():
         if mark.number:
             return int(round(mark.number))
