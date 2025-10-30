@@ -1,0 +1,12 @@
+# Chords + hold/strum/repeat demo
+BPM=96
+UNIT=8
+HOLD=0.12     # default key hold in sec
+STAGGER=0.010 # default chord spread
+REP=1         # default repeat per token
+
+LOW:  C+E+G:4            # C major triad (quarter)
+LOW:  R:8  F+A+C:4.      # rest then dotted chord
+HIGH: C5+E5+G5:2(h0.2)   # chord with longer hold
+LOW:  D+F# + A:8(st0.02) # slightly strummed
+LOW:  G+B+D:8(rep3)      # tremolo-like retrigger 3 times in the duration
