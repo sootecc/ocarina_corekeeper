@@ -78,12 +78,13 @@ LOW:  E D C R:8 C:8
 ```
 
 ---
-## 화음/홀드/스트럼/반복 표기
+## 화음/홀드/스트럼/반복/모드 표기
 - 화음: `C+E+G:4` (노트 사이 `+`)
 - 길이: `:4`, `:8+16`, 점음표 `.`
-- 속성(괄호): `(h0.15,st0.01,rep3)`
-  - `h` = hold(초), `st` = chord stagger/strum, `rep` = 반복 횟수
-- 헤더 기본값: `HOLD=0.12`, `STAGGER=0.008`, `REP=1` (본문 어디서나 변경 가능)
+- 속성(괄호): `(h0.15,st0.01,rep3,mode=sim)`
+  - `h` = hold(초), `st` = chord stagger/strum, `rep` = 반복 횟수, `mode` = `sim`(동시에 눌러 연주) / `strum`(기본, 순차로 눌러 아르페지오 느낌)
+- 헤더 기본값: `HOLD=0.12`, `STAGGER=0.008`, `REP=1`, `MODE=STRUM` (본문 어디서나 변경 가능)
+- 헤더/속성에서 `MODE=SIM` 또는 `(sim)`을 지정하면 해당 구간 화음이 완전 동시 입력으로 연주됩니다.
 
 예시:
 ```
@@ -91,6 +92,19 @@ BPM=96
 UNIT=8
 HOLD=0.12
 STAGGER=0.010
+MODE=SIM
 LOW: C+E+G:4
 LOW: G+B+D:8(rep3)
 ```
+
+---
+## 기존 악보(PDF/이미지) → 스크립트 변환 안내
+1. **이미지/PDF → MusicXML**: OMR(Optical Music Recognition) 도구인 [Audiveris](https://audiveris.github.io/) 등을 사용해 PDF/이미지를 MusicXML(`.xml`/`.mxl`)로 변환합니다.
+2. **MusicXML → 스크립트**: `music21` 패키지를 설치한 뒤 변환 스크립트를 사용하세요.
+
+```bash
+pip install music21
+python musicxml_to_song.py input_score.musicxml output_song.txt
+```
+
+변환된 `output_song.txt`는 `ocarina_player.py --song output_song.txt`로 바로 연주할 수 있습니다. (필요하면 매핑/옥타브 등을 수동 조정하세요.)
